@@ -2,7 +2,7 @@ import socket #for sockets
 import sys
 
 client_host = '0.0.0.0'
-client_port = 8889
+client_port = 5001
 
 try:
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -11,7 +11,7 @@ except socket.error:
     sys.exit()
 s.bind((client_host,client_port))
 host = 'localhost';
-port = 8888;    
+port = 5000;    
 
 while(1) :
     msg = input('Enter message to send : ')
