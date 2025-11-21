@@ -12,7 +12,7 @@ except socket.error:
 s.bind((client_host,client_port))
 host = 'localhost';
 port = 5000;    
-
+s.settimeout(3)
 while(1) :
     msg = input('Enter message to send : ')
 
@@ -29,3 +29,4 @@ while(1) :
         
     except KeyboardInterrupt:
         print("Test closed")
+        sys.exit()

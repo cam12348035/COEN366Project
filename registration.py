@@ -1,5 +1,8 @@
 
 def registration_handler(split_message, addr, peer_list, max_clients, udp_sock):
+    if len(split_message) < 8:
+        print("Message incorrect format")
+        return
     rq_num = split_message[1]
     name = split_message[2]
     role = split_message[3]
@@ -28,7 +31,7 @@ def registration_handler(split_message, addr, peer_list, max_clients, udp_sock):
     udp_sock.sendto(response.encode(), addr)
     print(f"Response sent to {addr}: {response}")
 
-def deregistration_handler(split_message, addr, peers, udp_sock):
+def deregistration_handler(split_message, addr, peer_list, udp_sock):
     rq_num = split_message[1]
     name = split_message[2]
     
