@@ -3,7 +3,6 @@
 
 
 import socket
-from registration import registration_handler, deregistration_handler
 import sys
 import threading
 
