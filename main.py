@@ -1,5 +1,6 @@
 #TODO:
 #Install mutex/lock on at least udp_request_list and request_number_list
+#Remove standard output to msg in client.py
 
 
 import socket
