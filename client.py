@@ -3,39 +3,16 @@ import sys
 import threading
 
 
-client_host = '0.0.0.0'
-client_port = 5001
-
-#UDP Socket
-try:
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-except socket.error:
-    print('Failed to create socket')
-    sys.exit()
-s.bind((client_host,client_port))
-host = 'localhost';
-port = 5000;    
-s.settimeout(3)
-
-#asks to create register new peer
-#new peer registered, added to a dict of clients, with:
-#   new udp port
-#   new tcp port
-#   new thread
-
-def peer_thread(name, peer_udp_port, peer_tcp_port):
-    while True:
-        pass
-
 def udp_socket_creator(port):
     try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     except socket.error:
         print('Failed to create socket')
         sys.exit()
-    s.bind((client_host,port))
-    s.settimeout(3)
-
+    sock.bind(('0.0.0.0',port))
+    sock.settimeout(3)
+    return sock
+    
 def send_message(msg):
     try :
         s.sendto(msg.encode(), (host, port))
@@ -50,9 +27,30 @@ def send_message(msg):
     except socket.error as msg:
         print('Error')
 
+
+#UDP Socket
+client_port = 5001
+s = udp_socket_creator(client_port)
+host = 'localhost';
+port = 5000;    
+
+
+
+
+def peer_thread(name, peer_udp_port, peer_tcp_port, close_flag):
+    peer_socket = udp_socket_creator(peer_udp_port)
+    
+    while True:
+        if close_flag.is_set():
+            break
+        else:
+            pass
+
+
 current_rq_no = 0
-current_udp_port = 5001
-current_tcp_port = 6001
+current_udp_port = 5002
+current_tcp_port = 6002
+peer_dict = {}
 
 while True:
     try:
@@ -73,21 +71,33 @@ while True:
             msg = "REGISTER " + str(current_rq_no) + " " + name + " " + role + " 192.168.1.10 " + str(current_udp_port) + " " + str(current_udp_port) + " 1024MB"
             if len(send_message(msg)) != 0:
                 print(f"Successful registration for {name}, starting thread")
-                subthread = threading.Thread(target=peer_thread, args =(name, current_udp_port, current_udp_port))    
+                close_flag = threading.Event()
+                subthread = threading.Thread(target=peer_thread, args =(name, current_udp_port, current_udp_port, close_flag))    
                 subthread.daemon = True
                 subthread.start()
                 
                 current_udp_port +=1
                 current_udp_port +=1
-                
-            
-            
-            
+                peer_dict.update({name:[subthread,close_flag]})
+                     
                     
         elif option == "2":
             name = input("What is the name for deregistration?\n")
             msg = "DE-REGISTER " + str(current_rq_no) + " " + name
-
+            if len(send_message(msg)) != 0:
+                peer_dict[name][1].set()
+                peer_dict.pop(name)
+                print(f"Successfully de-registered {name}, closed thread")
+                
+                
+        elif option == "3":
+            name = input("From which peer would you like to backup a file?")
+            if name in peer_dict:
+                pass
+            
+            
+        else:
+            print("Incorrect input, please try again")
 
 
         current_rq_no += 1
