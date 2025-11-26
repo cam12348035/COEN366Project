@@ -5,10 +5,12 @@ import os
 import binascii
 import ast
 import math
+from time import time
 
 peer_dict = {}
 backup_requests = {}
-
+global no_chunks
+global chunk_list
 
 def udp_socket_creator(port):
     try:
@@ -102,19 +104,21 @@ def send_file_chunks(file_data, file_name, rq_num, storage_peers, chunks_per_pee
 
 def receive_file_chunks(peer_tcp_port, peer_name, peer_socket, sender_name, no_chunks):
     chunk_list = []
+    expected_chunks = int(no_chunks)
     file_name = ""
     sender_udp_port = peer_dict[sender_name][4]
     chunks_accepted = 0
+    
     try:
         tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         tcp_sock.bind(('0.0.0.0', peer_tcp_port))
         tcp_sock.listen(5)
         print(f"{peer_name} TCP listener started on port {peer_tcp_port}")
-        while True:
+        while chunks_accepted < expected_chunks:
             conn, addr = tcp_sock.accept()
             print(f"{peer_name} accepted connection from {addr}")
             try:
-                while int(no_chunks) > chunks_accepted:
+                while chunks_accepted < expected_chunks:
                     header = b""
                     while not header.endswith(b'\n'):
                         header += conn.recv(1)
@@ -138,7 +142,7 @@ def receive_file_chunks(peer_tcp_port, peer_name, peer_socket, sender_name, no_c
                         received_checksum = binascii.crc32(chunk_data) & 0xffffffff
                         if received_checksum == expected_checksum:
                             chunk_list.append([chunk_id, chunk_data])
-                            
+
                             msg = f"CHUNK_OK {rq_num} {file_name} {chunk_id}"
                             send_message_no_reply(msg, peer_socket, sender_udp_port, sender_name)
                             
@@ -150,10 +154,13 @@ def receive_file_chunks(peer_tcp_port, peer_name, peer_socket, sender_name, no_c
                             send_message_no_reply(msg, peer_socket, sender_udp_port, sender_name)
 
                         chunks_accepted +=1
+                        if chunks_accepted >= expected_chunks:
+                            break
             except Exception as e:
                 print(f"Error receiving chunk: {e}")
             finally:
                 conn.close()
+        tcp_sock.close()
     except Exception as e:
         print(f"TCP listener error: {e}")
 
@@ -161,7 +168,11 @@ def receive_file_chunks(peer_tcp_port, peer_name, peer_socket, sender_name, no_c
 
 
 
-   
+def heartbeat():
+    while True:
+        msg = f"HEARTBEAT {current_rq_no} {peer} {no_chunks} {time.time()}"
+        current_udp_port.sendto(msg.encode(), (server_port))
+        time.sleep(5)
 
 
 
@@ -219,9 +230,12 @@ def peer_thread(name, peer_udp_port, peer_tcp_port, close_flag, backup_flag, rol
                 
             if role != "OWNER" and split_message[0] == "STORAGE_TASK":
                 last_storage_name = split_message[5]
-                last_storage_chunks = split_message[4]
+                last_storage_chunks = int(split_message[4])
 
             if role != "OWNER" and split_message[0] == "STORE_REQ":
+                if not last_storage_name:
+                    print("STORE_REQ received before STORAGE_TASK assignment; ignoring")
+                    continue
                 file, chunk_list = receive_file_chunks(peer_tcp_port, name, peer_socket, last_storage_name, last_storage_chunks)
                 file_list.append(file)
                 chunk_storage_list.append(chunk_list)
