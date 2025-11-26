@@ -92,6 +92,7 @@ def registration_handler(split_message, addr, udp_sock):
     #Register peer
     storage_int = convert_to_bytes(storage)
     peer_list[name] = [role, ip_add, udp_port, tcp_port, storage_int]
+    last_heartbeat[name] = time.time()
     print(f"Registered: {name}, {role}")
     
     response = f"REGISTERED {rq_num}"
@@ -106,6 +107,7 @@ def deregistration_handler(split_message, addr, udp_sock):
     
     if name in peer_list:
         del peer_list[name]
+        last_heartbeat.pop(name, None)
         print(f"De-registered: {name}")
         response = f"DE-REGISTERED {rq_num}"
         udp_sock.sendto(response.encode(), addr)
@@ -193,8 +195,9 @@ def backup_handler(split_message, addr, udp_sock, tcp_sock):
 def heartbeat_watcher():
   while True:
       now = time.time()
-      for peer in peer_list:
-          if now - last_heartbeat[peer] > TIMEOUT:
+      for peer in list(peer_list.keys()):
+          last_seen = last_heartbeat.get(peer)
+          if last_seen is None or now - last_seen > TIMEOUT:
               mark_as_dead(peer)
       time.sleep(2)
 
@@ -214,9 +217,12 @@ def main_thread():
             print(f"Received {message} from {addr}")
 
             if split_message[0] == "HEARTBEAT":
-                subthread = threading.Thread(target=heartbeat_watcher, args =(split_message, addr, udp_sock))
-                subthread.daemon = True
-                subthread.start()
+                if len(split_message) >= 3:
+                    peer_name = split_message[2]
+                    last_heartbeat[peer_name] = time.time()
+                    print(f"Heartbeat received from {peer_name}")
+                else:
+                    print("Malformed HEARTBEAT message ignored")
                 continue
             
             if len(split_message) < 3:

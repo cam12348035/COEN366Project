@@ -5,7 +5,7 @@ import os
 import binascii
 import ast
 import math
-from time import time
+import time
 
 peer_dict = {}
 backup_requests = {}
@@ -168,11 +168,13 @@ def receive_file_chunks(peer_tcp_port, peer_name, peer_socket, sender_name, no_c
 
 
 
-def heartbeat():
-    while True:
-        msg = f"HEARTBEAT {current_rq_no} {peer} {no_chunks} {time.time()}"
-        current_udp_port.sendto(msg.encode(), (server_port))
-        time.sleep(5)
+def heartbeat_sender(peer_name, peer_socket, stop_event):
+    seq = 0
+    while not stop_event.is_set():
+        msg = f"HEARTBEAT {seq} {peer_name} {time.time()}"
+        send_message_no_reply(msg, peer_socket, server_port, "Server")
+        seq += 1
+        stop_event.wait(2)
 
 
 
@@ -180,6 +182,9 @@ def heartbeat():
 def peer_thread(name, peer_udp_port, peer_tcp_port, close_flag, backup_flag, role):
     peer_socket = udp_socket_creator(peer_udp_port)
     peer_socket.settimeout(0.001)
+    heartbeat_thread = threading.Thread(target=heartbeat_sender, args=(name, peer_socket, close_flag))
+    heartbeat_thread.daemon = True
+    heartbeat_thread.start()
     backing_up = False
     file_name = ""
     file_size = 0
