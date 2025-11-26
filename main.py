@@ -1,7 +1,7 @@
 #TODO:
 #Install mutex/lock on at least udp_request_list and request_number_list
 
-
+import time
 import socket
 import sys
 import threading
@@ -16,6 +16,7 @@ MAX_CLIENTS = 50
 
 peer_list = {}
 storage_list = {}
+stored_data_mapping = {}
 
 udp_request_list = []
 request_number_list = []
@@ -149,13 +150,11 @@ def backup_handler(split_message, addr, udp_sock, tcp_sock):
         for name, peer_info in peer_list.items():
             if int(peer_info[2]) == int(addr[1]):  # role is at index 0
                 peer_name = name   
-   
-
-   
+    
         #Send message to storage peers:
         print(f"Peers available for storage: {peers_for_storage}")
         for i in range(len(peers_for_storage)):
-            msg = "STORAGE_TASK " + str(rq_num) + " " + file_name + " 4096 " + split_message[1] + " " + str(chunks_per_peer[i]) + " " + peer_name
+            msg = "STORAGE_TASK " + str(rq_num) + " " + file_name + " 4096 " + str(chunks_per_peer[i]) + " " + peer_name
             send_message(msg, int(peer_list[peers_for_storage[i]][2]))
             
         #Replies to the requester
@@ -170,14 +169,23 @@ def backup_handler(split_message, addr, udp_sock, tcp_sock):
                 msg = "STORE_REQ " + str(rq_num) + " " + file_name + " " + str(last_chunk + j)  + " " + peer_name
                 send_message(msg, int(peer_list[peers_for_storage[i]][2]))
             last_chunk = last_chunk + chunks_per_peer[i]
-
+        
 
     except:
     
 #TODO: Add reason for denial
-        msg = "BACKUP-DENIED " + str(rq_num) + " Reason"
+        msg = "BACKUP-DENIED " + str(rq_num) + " Reason" + {e}
         send_message(msg, addr[1])
+    
+    while True:
+        time.sleep(0.5)
+        for i in udp_request_list:
+            message = i[0]
+            message_split = message.split()
+            if i[0] == "BACKUP_DONE" and int(i[1]) == rq_num:
+                break
 
+    
     request_number_list.remove(rq_num)
 
 
@@ -200,13 +208,19 @@ def main_thread():
                 request_number_list.append(split_message[1])
                 if split_message[0] == "REGISTER":
                     subthread = threading.Thread(target=registration_handler, args =(split_message, addr, udp_sock))
+                    subthread.daemon = True
+                    subthread.start()
 
                 elif split_message[0] == "DE-REGISTER":
                     subthread = threading.Thread(target=deregistration_handler, args = (split_message, addr, udp_sock))
+                    subthread.daemon = True
+                    subthread.start()
+
                 elif split_message[0] == "BACKUP_REQ":
                     subthread = threading.Thread(target=backup_handler, args = (split_message, addr, udp_sock, tcp_sock))
-                subthread.daemon = True
-                subthread.start()
+                    subthread.daemon = True
+                    subthread.start()
+
     except KeyboardInterrupt:
         sys.exit()
 

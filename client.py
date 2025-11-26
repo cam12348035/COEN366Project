@@ -42,6 +42,11 @@ def send_message_no_reply(msg, sock, send_port, receiver_name):
     except socket.error as msg:
         print('Error')
 
+#UDP Socket
+client_port = 5001
+s = udp_socket_creator(client_port)
+host = 'localhost';
+server_port = 5000; 
 
 def send_file_chunks(file_data, file_name, rq_num, storage_peers, chunks_per_peer, udp_socket):
     chunk_size=4096
@@ -76,7 +81,10 @@ def send_file_chunks(file_data, file_name, rq_num, storage_peers, chunks_per_pee
                 #Wait for answer
                 udp_socket.settimeout(0.5)
                 data, addr = udp_socket.recvfrom(4096)
-                if error_count<=3 and not data: 
+                print(f"{addr[1]} reply : {data.decode()}")
+                message = data.decode()
+                message_split = message.split()
+                if error_count<=3 and not data and message_split[0] == "CHUNK_OK": 
                     chunk_id -= 1
                     error_count +=1
                 else:
@@ -85,6 +93,10 @@ def send_file_chunks(file_data, file_name, rq_num, storage_peers, chunks_per_pee
                             
             tcp_sock.close()
             last_chunk = last_chunk + chunks_per_peer[index]
+            
+            if last_chunk == total_chunks:
+                msg = f"BACKUP_DONE {rq_num} {file_name}"
+                send_message_no_reply(msg, udp_socket, server_port, "Server")
         except Exception as e:
             print(f"Error sending to {peer_name}: {e}")
 
@@ -129,6 +141,14 @@ def receive_file_chunks(peer_tcp_port, peer_name, peer_socket, sender_name, no_c
                             
                             msg = f"CHUNK_OK {rq_num} {file_name} {chunk_id}"
                             send_message_no_reply(msg, peer_socket, sender_udp_port, sender_name)
+                            
+                            msg = f"STORE_ACK {rq_num} {file_name} {chunk_id}"
+                            send_message_no_reply(msg, peer_socket, server_port, "Server")
+
+                        else:
+                            msg = f"CHUNK_ERROR {rq_num} {file_name} {chunk_id} Checksum_Mismatch"
+                            send_message_no_reply(msg, peer_socket, sender_udp_port, sender_name)
+
                         chunks_accepted +=1
             except Exception as e:
                 print(f"Error receiving chunk: {e}")
@@ -141,11 +161,7 @@ def receive_file_chunks(peer_tcp_port, peer_name, peer_socket, sender_name, no_c
 
 
 
-#UDP Socket
-client_port = 5001
-s = udp_socket_creator(client_port)
-host = 'localhost';
-server_port = 5000;    
+   
 
 
 
@@ -160,6 +176,9 @@ def peer_thread(name, peer_udp_port, peer_tcp_port, close_flag, backup_flag, rol
     file_data = 0
     last_storage_name = ""
     last_storage_chunks = 0
+    file_list = []
+    chunk_storage_list = []
+    
     while True:
         if close_flag.is_set():
             break
@@ -199,12 +218,13 @@ def peer_thread(name, peer_udp_port, peer_tcp_port, close_flag, backup_flag, rol
                 send_file_chunks(file_data, file_name, int(split_message[1]), storage_peer_list, storage_chunks_list, peer_socket)
                 
             if role != "OWNER" and split_message[0] == "STORAGE_TASK":
-                last_storage_name = split_message[6]
-                last_storage_chunks = split_message[5]
+                last_storage_name = split_message[5]
+                last_storage_chunks = split_message[4]
 
             if role != "OWNER" and split_message[0] == "STORE_REQ":
                 file, chunk_list = receive_file_chunks(peer_tcp_port, name, peer_socket, last_storage_name, last_storage_chunks)
-
+                file_list.append(file)
+                chunk_storage_list.append(chunk_list)
 
             
         except socket.timeout:
