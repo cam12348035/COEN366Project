@@ -1,11 +1,12 @@
 #TODO:
 #Install mutex/lock on at least udp_request_list and request_number_list
-#Remove standard output to msg in client.py
 
 
 import socket
 import sys
 import threading
+import math
+
 
 # Server settings
 HOST = '0.0.0.0'
@@ -14,9 +15,10 @@ TCP_PORT = 6000
 MAX_CLIENTS = 50
 
 peer_list = {}
+storage_list = {}
+
 udp_request_list = []
 request_number_list = []
-
 
 # UDP socket
 try:
@@ -37,6 +39,28 @@ try:
 except:
     print('Failed to create TCP. Error Code : ' + str(msg[0]) + ' Message ' + msg[1])
     sys.exit()
+
+def convert_to_bytes(size_str):
+    units = {
+        'B': 1,
+        'KB': 1024,
+        'MB': 1024 ** 2,
+        'GB': 1024 ** 3,
+        'TB': 1024 ** 4
+    }
+    
+    number = int(''.join(filter(str.isdigit, size_str)))
+    unit = ''.join(filter(str.isalpha, size_str))
+    return number * units.get(unit, 1)
+
+def send_message(msg, port):
+    try :
+        udp_sock.sendto(msg.encode(), ('localhost', port))
+        print(f"Sending {msg} to {port}")
+
+    except socket.error as msg:
+        print('Error')
+
 
 def registration_handler(split_message, addr, udp_sock):
     if len(split_message) < 8:
@@ -63,7 +87,8 @@ def registration_handler(split_message, addr, udp_sock):
         return
     
     #Register peer
-    peer_list[name] = (role, ip_add, udp_port, tcp_port, storage)
+    storage_int = convert_to_bytes(storage)
+    peer_list[name] = [role, ip_add, udp_port, tcp_port, storage_int]
     print(f"Registered: {name}, {role}")
     
     response = f"REGISTERED {rq_num}"
@@ -87,6 +112,74 @@ def deregistration_handler(split_message, addr, udp_sock):
     request_number_list.remove(rq_num)
 
 
+def backup_handler(split_message, addr, udp_sock, tcp_sock):
+    rq_num = split_message[1]
+    file_name = split_message[2]
+    file_size = int(split_message[3])
+    no_chunks = math.ceil(int(file_size)/4096)
+    
+    peers_for_storage = []
+    chunks_per_peer = []
+    try:
+        for name,peer_info in peer_list.items():
+            if no_chunks <= 0:
+                break
+            if peer_info[0] != "OWNER":
+                storage_chunks = math.floor(int(peer_info[4])/4096)
+                if storage_chunks > 0:
+                
+                    if  no_chunks - storage_chunks< 0:
+                        storage_chunks = no_chunks
+                        no_chunks = 0
+                    else: 
+                        no_chunks = no_chunks - storage_chunks
+                    peers_for_storage.append(name)
+                    chunks_per_peer.append(storage_chunks)
+        
+        
+        #Remove used storage from peer
+        for i in range(len(peers_for_storage)):
+            temp_peer = peer_list[peers_for_storage[i]]
+            temp_peer[4] = temp_peer[4] - chunks_per_peer[i]*4096
+            peer_list[peers_for_storage[i]] = temp_peer
+        
+
+        #Find requesting peer name:
+        peer_name = "no_name"
+        for name, peer_info in peer_list.items():
+            if int(peer_info[2]) == int(addr[1]):  # role is at index 0
+                peer_name = name   
+   
+
+   
+        #Send message to storage peers:
+        print(f"Peers available for storage: {peers_for_storage}")
+        for i in range(len(peers_for_storage)):
+            msg = "STORAGE_TASK " + str(rq_num) + " " + file_name + " 4096 " + split_message[1] + " " + str(chunks_per_peer[i]) + " " + peer_name
+            send_message(msg, int(peer_list[peers_for_storage[i]][2]))
+            
+        #Replies to the requester
+        msg = "BACKUP_PLAN " + str(rq_num) + " " + file_name + " " + str(peers_for_storage) + " " + str(chunks_per_peer) + " " + "4096"
+        print(msg)
+        send_message(msg, addr[1])
+        
+        #Notifies each selected peer:
+        last_chunk = 0
+        for i in range(len(chunks_per_peer)):
+            for j in range(chunks_per_peer[i]):
+                msg = "STORE_REQ " + str(rq_num) + " " + file_name + " " + str(last_chunk + j)  + " " + peer_name
+                send_message(msg, int(peer_list[peers_for_storage[i]][2]))
+            last_chunk = last_chunk + chunks_per_peer[i]
+
+
+    except:
+    
+#TODO: Add reason for denial
+        msg = "BACKUP-DENIED " + str(rq_num) + " Reason"
+        send_message(msg, addr[1])
+
+    request_number_list.remove(rq_num)
+
 
 
 def main_thread():
@@ -95,6 +188,8 @@ def main_thread():
             data, addr = udp_sock.recvfrom(4096)
             message = data.decode()
             split_message = message.split()
+            print(f"Received {message} from {addr}")
+
             if len(split_message) < 3:
                 print("Wrong message size")
                 continue
@@ -108,7 +203,8 @@ def main_thread():
 
                 elif split_message[0] == "DE-REGISTER":
                     subthread = threading.Thread(target=deregistration_handler, args = (split_message, addr, udp_sock))
-                    
+                elif split_message[0] == "BACKUP_REQ":
+                    subthread = threading.Thread(target=backup_handler, args = (split_message, addr, udp_sock, tcp_sock))
                 subthread.daemon = True
                 subthread.start()
     except KeyboardInterrupt:
