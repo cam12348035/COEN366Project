@@ -20,14 +20,16 @@ stored_data_mapping = {}
 
 udp_request_list = []
 request_number_list = []
+last_heartbeat = {}
+TIMEOUT = 5  # seconds
 
 # UDP socket
 try:
     udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     udp_sock.bind((HOST, UDP_PORT))
     print('UDP Socket created')
-except:
-    print('Failed to create UDP. Error Code : ' + str(msg[0]) + ' Message ' + msg[1])
+except Exception as exc:
+    print(f'Failed to create UDP socket: {exc}')
     sys.exit()
 
 
@@ -37,8 +39,8 @@ try:
     tcp_sock.bind(('localhost', TCP_PORT))
     tcp_sock.listen(1)
     print('TCP Socket created')
-except:
-    print('Failed to create TCP. Error Code : ' + str(msg[0]) + ' Message ' + msg[1])
+except Exception as exc:
+    print(f'Failed to create TCP socket: {exc}')
     sys.exit()
 
 def convert_to_bytes(size_str):
@@ -90,6 +92,7 @@ def registration_handler(split_message, addr, udp_sock):
     #Register peer
     storage_int = convert_to_bytes(storage)
     peer_list[name] = [role, ip_add, udp_port, tcp_port, storage_int]
+    last_heartbeat[name] = time.time()
     print(f"Registered: {name}, {role}")
     
     response = f"REGISTERED {rq_num}"
@@ -104,6 +107,7 @@ def deregistration_handler(split_message, addr, udp_sock):
     
     if name in peer_list:
         del peer_list[name]
+        last_heartbeat.pop(name, None)
         print(f"De-registered: {name}")
         response = f"DE-REGISTERED {rq_num}"
         udp_sock.sendto(response.encode(), addr)
@@ -174,7 +178,7 @@ def backup_handler(split_message, addr, udp_sock, tcp_sock):
     except:
     
 #TODO: Add reason for denial
-        msg = "BACKUP-DENIED " + str(rq_num) + " Reason" + {e}
+        msg = "BACKUP-DENIED " + str(rq_num) + " Reason" + {Exception}
         send_message(msg, addr[1])
     
     while True:
@@ -188,7 +192,21 @@ def backup_handler(split_message, addr, udp_sock, tcp_sock):
     
     request_number_list.remove(rq_num)
 
+def heartbeat_watcher():
+  while True:
+      now = time.time()
+      for peer in list(peer_list.keys()):
+          last_seen = last_heartbeat.get(peer)
+          if last_seen is None or now - last_seen > TIMEOUT:
+              mark_as_dead(peer)
+      time.sleep(2)
 
+def mark_as_dead(peer):
+    print(f"Peer {peer} has timed out. Marking as dead.")
+    if peer in peer_list:
+        del peer_list[peer]
+    if peer in last_heartbeat:
+        del last_heartbeat[peer]
 
 def main_thread():
     try:
@@ -198,6 +216,15 @@ def main_thread():
             split_message = message.split()
             print(f"Received {message} from {addr}")
 
+            if split_message[0] == "HEARTBEAT":
+                if len(split_message) >= 3:
+                    peer_name = split_message[2]
+                    last_heartbeat[peer_name] = time.time()
+                    print(f"Heartbeat received from {peer_name}")
+                else:
+                    print("Malformed HEARTBEAT message ignored")
+                continue
+            
             if len(split_message) < 3:
                 print("Wrong message size")
                 continue
@@ -235,6 +262,10 @@ def main_thread():
 main_th = threading.Thread(target=main_thread)
 main_th.daemon = True
 main_th.start()
+
+heartbeat_th = threading.Thread(target=heartbeat_watcher)
+heartbeat_th.daemon = True
+heartbeat_th.start()
 
 try:
     while True:
