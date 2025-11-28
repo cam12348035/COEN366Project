@@ -21,7 +21,7 @@ stored_data_mapping = {}
 udp_request_list = []
 request_number_list = []
 last_heartbeat = {}
-TIMEOUT = 5  # seconds
+TIMEOUT = 15  # seconds
 
 # UDP socket
 try:
@@ -118,13 +118,20 @@ def deregistration_handler(split_message, addr, udp_sock):
 
 
 def backup_handler(split_message, addr, udp_sock, tcp_sock):
-    rq_num = split_message[1]
-    file_name = split_message[2]
-    file_size = int(split_message[3])
-    no_chunks = math.ceil(int(file_size)/4096)
+    rq_num    = split_message[1]
+    peer_name = split_message[2]
+    file_name = split_message[3]
+    file_size = int(split_message[4])
+    no_chunks = math.ceil(file_size / 4096)
     
     peers_for_storage = []
     chunks_per_peer = []
+    if peer_name not in peer_list:
+        print("Unknown backup requester:", peer_name)
+        msg = f"BACKUP-DENIED {rq_num} {file_name} Unknown_peer"
+        send_message(msg, addr[1])
+        return
+    
     try:
         for name,peer_info in peer_list.items():
             if no_chunks <= 0:
@@ -147,13 +154,7 @@ def backup_handler(split_message, addr, udp_sock, tcp_sock):
             temp_peer = peer_list[peers_for_storage[i]]
             temp_peer[4] = temp_peer[4] - chunks_per_peer[i]*4096
             peer_list[peers_for_storage[i]] = temp_peer
-        
-
-        #Find requesting peer name:
-        peer_name = "no_name"
-        for name, peer_info in peer_list.items():
-            if int(peer_info[2]) == int(addr[1]):  # role is at index 0
-                peer_name = name   
+          
     
         #Send message to storage peers:
         print(f"Peers available for storage: {peers_for_storage}")
@@ -166,12 +167,21 @@ def backup_handler(split_message, addr, udp_sock, tcp_sock):
         print(msg)
         send_message(msg, addr[1])
         
-        #Notifies each selected peer:
+        #Notifies each selected peer AND record mapping of chunks
+        key = (peer_name, file_name)
+        if key not in stored_data_mapping:
+            stored_data_mapping[key] = []
         last_chunk = 0
         for i in range(len(chunks_per_peer)):
+            storage_peer = peers_for_storage[i]
             for j in range(chunks_per_peer[i]):
-                msg = "STORE_REQ " + str(rq_num) + " " + file_name + " " + str(last_chunk + j)  + " " + peer_name
-                send_message(msg, int(peer_list[peers_for_storage[i]][2]))
+                chunk_id = last_chunk + j
+                msg = "STORE_REQ " + str(rq_num) + " " + file_name + " " + str(chunk_id) + " " + peer_name
+                send_message(msg, int(peer_list[storage_peer][2]))
+                stored_data_mapping[key].append({
+                    "peer": storage_peer,
+                    "chunk_id": chunk_id
+                    })
             last_chunk = last_chunk + chunks_per_peer[i]
         
 
@@ -207,6 +217,53 @@ def mark_as_dead(peer):
         del peer_list[peer]
     if peer in last_heartbeat:
         del last_heartbeat[peer]
+
+def restore_req_handler(split_message, addr, udp_sock):
+    # RESTORE_REQ RQ# File_Name
+    rq_num = split_message[1]
+    file_name = split_message[2]
+
+    # Find owner peer name from UDP port (same trick as in backup_handler)
+    owner_name = None
+    for name, peer_info in peer_list.items():
+        if int(peer_info[2]) == int(addr[1]):  # peer_info[2] is udp_port
+            owner_name = name
+            break
+
+    if owner_name is None:
+        print("RESTORE_REQ from unknown peer at", addr)
+        response = f"RESTORE_FAIL {rq_num} {file_name} Unknown_peer"
+        udp_sock.sendto(response.encode(), addr)
+        return
+
+    key = (owner_name, file_name)
+    if key not in stored_data_mapping:
+        print("No backup info for", key)
+        response = f"RESTORE_FAIL {rq_num} {file_name} File_not_found"
+        udp_sock.sendto(response.encode(), addr)
+        return
+
+    entries = stored_data_mapping[key]   # list of {"peer": ..., "chunk_id": ...}
+
+    # Build mapping: peer -> list of chunk_ids
+    mapping = {}
+    for entry in entries:
+        p = entry["peer"]
+        cid = entry["chunk_id"]
+        mapping.setdefault(p, []).append(cid)
+
+    # Encode mapping as: [Store1:0,1;Store2:2,3]
+    parts = []
+    for p, chunk_ids in mapping.items():
+        chunk_str = ",".join(str(c) for c in chunk_ids)
+        parts.append(f"{p}:{chunk_str}")
+    mapping_str = ";".join(parts)
+
+    response = f"RESTORE_PLAN {rq_num} {file_name} [{mapping_str}]"
+    udp_sock.sendto(response.encode(), addr)
+    print(f"Sent to {addr}: {response}")
+
+
 
 def main_thread():
     try:
@@ -247,6 +304,16 @@ def main_thread():
                     subthread = threading.Thread(target=backup_handler, args = (split_message, addr, udp_sock, tcp_sock))
                     subthread.daemon = True
                     subthread.start()
+                elif split_message[0] == "BACKUP_REQ":
+                    subthread = threading.Thread(target=backup_handler, args=(split_message, addr, udp_sock, tcp_sock))
+                    subthread.daemon = True
+                    subthread.start()
+
+                elif split_message[0] == "RESTORE_REQ":
+                    subthread = threading.Thread(target=restore_req_handler, args=(split_message, addr, udp_sock))
+                    subthread.daemon = True
+                    subthread.start()
+
 
     except KeyboardInterrupt:
         sys.exit()
