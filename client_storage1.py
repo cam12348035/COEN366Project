@@ -8,17 +8,16 @@ import math
 import time
 import zlib
 
-peer_dict = {}
 backup_requests = {}
 restore_requests = {}
 listener_started = {}
 global no_chunks
 
 
-name = "Owner"
-suboption = "2"
-udp_port = 5001
-tcp_port = 6001
+name = "Storage1"
+suboption = "1"
+udp_port = 5002
+tcp_port = 6002
 close_flag = False
 backup_flag = False
 restore_flag = False
